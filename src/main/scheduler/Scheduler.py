@@ -1,6 +1,7 @@
 import sys
 from model.Vaccine import Vaccine
 from model.Caregiver import Caregiver
+from model.Appointment import Appointment
 from model.Patient import Patient
 from util.Util import Util
 from db.ConnectionManager import ConnectionManager
@@ -191,11 +192,17 @@ def login_caregiver(tokens):
 
 def search_caregiver_schedule(tokens):
     """
-    TODO
+    TODO NOT PRINTING AVAILABILITIES
+    User does not have to be logged in
     Outputs username of caregiver for date/time & number of doses
     left for each vaccine
     tokens: <date>
     """
+    # # Make sure user is logged in
+    # if not logged_in():
+    #     print("Not currently logged in! Please login as a caregiver or patient"
+    #           "to look at the caregiver schedule!")
+
     if len(tokens) != 2:
         print("Please try again!")
         return
@@ -216,24 +223,54 @@ def search_caregiver_schedule(tokens):
 
     cm = ConnectionManager()
     conn = cm.create_connection()
-    # SQL statement to check if username is in database
-    get_caregiver_availabilities = "SELECT Username FROM Availabilities a WHERE a.Time = %s"
-    get_vaccine_availabilities = "SELECT * FROM Vaccines"
+
+    if is_date_available(d):
+        print("Caregivers Available:")
+        get_caregivers = "SELECT Username FROM Availabilities WHERE Time = %s"
+        try:
+            cursor = conn.cursor(as_dict=True)
+            cursor.execute(get_caregivers, d)
+            for row in cursor:
+                print("Caregiver: " + str(row['Username']))
+        except pymssql.Error as db_err:
+            print("Error occurred when printing caregivers available")
+            cm.close_connection()
+        print()
+        print("Vaccines Available:")
+        get_vaccine_availabilities = "SELECT * FROM Vaccines"
+        try:
+            cursor = conn.cursor(as_dict=True)
+            cursor.execute(get_vaccine_availabilities)
+            for row in cursor:
+                print("Vaccine: " + str(row['Name']) + ", Available_doses: " + str(row['Doses']))
+        except pymssql.Error:
+            print("Error occurred when getting vaccine availabilities")
+            cm.close_connection()
+        cm.close_connection()
+    else:
+        print("Sorry, there are no availabilities on date!")
+
+
+def is_date_available(date):
+    """
+    date is datetime object
+    """
+    cm = ConnectionManager()
+    conn = cm.create_connection()
+    check_availabilities = "SELECT COUNT(*) AS count FROM Availabilities WHERE Time = %s"
     try:
         cursor = conn.cursor(as_dict=True)
-        cursor.execute(get_caregiver_availabilities, d)
-        one_care_row = cursor.fetchone()
-        if one_care_row is None:
-            print("There are no availabilities for the given date!")
-            return
-        cursor2 = conn.cursor(as_dict=True)
-        cursor2.execute(get_vaccine_availabilities)
-        for care_row in cursor:
-            for vax_row in cursor2:
-                print("Caregiver: " + str(care_row['Username']) + ", Vaccine: " + str(vax_row['Name'])
-                  + ", available_doses: " + str(vax_row['Doses']))
-    except pymssql.Error:
-        print("Error occurred when getting availabilities")
+        cursor.execute(check_availabilities, date)
+        row_count = -1
+        for row in cursor:
+            row_count = row['count']
+            break
+        if row_count > 0:
+            return True
+        else:
+            return False
+    except pymssql.Error as db_err:
+        print("Error occurred while checking availability on date")
         cm.close_connection()
     cm.close_connection()
 
@@ -256,18 +293,98 @@ def reserve(tokens):
               "a patient to reserve an appointment.")
         return
     if current_patient is None:
-        print("Not currently logged in as a patient! Please login as a patient"
+        print("Not currently logged in as a patient! Please login as a patient "
               "to reserve an appointment")
+        return
     # make sure date is valid
-    # make sure there is availability on date:
-    # add appointment to `Appointments` table
-    # update number of available_doses in `Vaccines` table
-    # randomly assign caregiver
-    # remove availability for date from Availabilities table for caregiver
-    """
-        except ValueError:
+    date = tokens[1] # assume input is hyphenated in the format mm-dd-yyyy
+    d = None
+    try:
+        date_tokens = date.split("-")
+        month = int(date_tokens[0])
+        day = int(date_tokens[1])
+        year = int(date_tokens[2])
+        d = datetime.datetime(year, month, day)
+    except ValueError:
         print("Please enter a valid date!")
-    """
+        return
+
+    # make sure the vaccine exists:
+    # print('setting vaccine name:', tokens[2])
+    vaccine = Vaccine(vaccine_name=tokens[2])
+    check_vaccine = vaccine.get()
+    if check_vaccine is None:
+        print("Vaccine does not exist, please enter a valid vaccine name!")
+        return
+    # make sure there are doses for vaccine:
+    if vaccine.get_available_doses() == 0:
+        print("Sorry, there are no available doses for vaccine chosen!")
+        return
+
+    # check caregiver availability on <date>
+    if not is_date_available(d):
+        print("Sorry, no caregivers are available on selected date. Please try"
+              " a different date!")
+        return
+
+    # randomly assign caregiver to appointment
+    cm = ConnectionManager()
+    conn = cm.create_connection()
+    get_caregiver_availabilities = "SELECT Username FROM Availabilities WHERE Time = %s"
+    cursor = conn.cursor(as_dict=True)
+    cursor.execute(get_caregiver_availabilities, d)
+    care_username = ''
+    for row in cursor:
+        care_username = str(row['Username'])
+        break
+
+    # add appointment to `Appointments` table
+    add_appointment = "INSERT INTO Appointments (Time, Caregiver, Patient, Vaccine) VALUES (%s, %s, %s, %s)"
+    appt_tuple = (str(d), str(care_username), str(current_patient.get_username()), str(vaccine.get_vaccine_name()))
+    try:
+        cursor.execute(add_appointment, appt_tuple)
+        appt_id = cursor.lastrowid
+    except pymssql.Error as db_error:
+        print("Error occurred when inserting Appointment")
+        sqlrc = str(db_error.args[0])
+        print(db_error)
+        print("Exception code:" + str(sqlrc))
+        cm.close_connection()
+        return
+
+    # update number of available_doses in `Vaccines` table
+    update_vaccine_availability = "UPDATE Vaccines SET Doses = %d WHERE name = %s"
+    new_dose = vaccine.get_available_doses() - 1
+    try:
+        cursor.execute(update_vaccine_availability, (new_dose, vaccine.get_vaccine_name()))
+    except pymssql.Error:
+        print("Error occurred when updating vaccine availability after trying"
+              " to create an appointment. Failed to reserve appointment")
+        cm.close_connection()
+        return
+
+    # remove availability for date from Availabilities table for caregiver
+    delete_availability = "DELETE FROM Availabilities WHERE Time = %s AND Username = %s"
+    try:
+        cursor.execute(delete_availability, (d, care_username))
+    except pymssql.Error as db_err:
+        print("Error occurred when removing caregiver availability after trying"
+              " to create an appointment. Failed to reserve appointment.")
+        print("the database error is:", db_err)
+        cm.close_connection()
+        return
+
+    # caregiver.update_availability(d)
+    try:
+        conn.commit()
+        print("Successfully reserved an appointment for the "
+              + vaccine.get_vaccine_name() + " vaccine.")
+        print("Your appointment number is: " + str(appt_id))
+        print("Your assigned caregiver is: " + appt_tuple[1])
+    except pymssql.Error as db_err:
+        print("Error, could not save changes! Failed to reserve appointment.")
+        cm.close_connection()
+    cm.close_connection()
 
 
 def upload_availability(tokens):
@@ -377,23 +494,29 @@ def add_doses(tokens):
     print("Doses updated!")
 
 
+def logged_in():
+    # make sure user is logged in as caregiver or patient
+    global current_caregiver
+    global current_patient
+    return (current_patient is not None) or (current_caregiver is not None)
+
+
 def show_appointments(tokens):
-    '''
+    """
     TODO: Part 2
     Output scheduled appointments for the current user
-    '''
+    """
     if len(tokens) != 1:
         print("Uh oh, too many parameters! Only need to type 'show_appointments'"
               " to show all current appointments!")
         return
 
     # make sure the user is logged in
-    global current_caregiver
-    global current_patient
-    if current_patient is None and current_patient is None:
+    if not logged_in():
         print("Cannot show appointments if you are not logged in! Please login"
-              "as a caregiver or patient.")
+              " as a caregiver or patient.")
         return
+
     cm = ConnectionManager()
     conn = cm.create_connection()
     # for caregivers: appointment ID, vaccine name, date, patient name
@@ -404,8 +527,8 @@ def show_appointments(tokens):
             cursor = conn.cursor(as_dict=True)
             cursor.execute(get_appointments, username)
             for row in cursor:
-                print("Appointment ID: " + str(row['id']) + "Vaccine: " + str(row['Vaccine'])
-                      + "Date: " + str(row['Time']) + "Patient: " + str(row['Patient']))
+                print("Appointment ID: " + str(row['id']) + ", Vaccine: " + str(row['Vaccine'])
+                      + ", Date: " + str(row['Time']) + ", Patient: " + str(row['Patient']))
         except pymssql.Error:
             print("Error occurred when showing appointments")
             cm.close_connection()
@@ -418,10 +541,10 @@ def show_appointments(tokens):
             cursor = conn.cursor(as_dict=True)
             cursor.execute(get_appointments, username)
             for row in cursor:
-                print("Appointment ID: " + str(row['id']) + "Vaccine: " + str(row['Vaccine'])
-                      + "Date: " + str(row['Time']) + "Caregiver: " + str(row['Caregiver']))
+                print("Appointment ID: " + str(row['id']) + ", Vaccine: " + str(row['Vaccine'])
+                      + ", Date: " + str(row['Time']) + ", Caregiver: " + str(row['Caregiver']))
         except pymssql.Error:
-            print("Error occured when showing appointments")
+            print("Error occurred when showing appointments")
             cm.close_connection()
     cm.close_connection()
 
@@ -435,7 +558,7 @@ def logout(tokens):
         return
     global current_caregiver
     global current_patient
-    if current_patient is None and current_caregiver is None:
+    if not logged_in():
         print("Not currently logged in!")
         return
     if current_caregiver is not None:

@@ -5,7 +5,7 @@ import pymssql
 
 
 class Vaccine:
-    def __init__(self, vaccine_name, available_doses):
+    def __init__(self, vaccine_name, available_doses=None):
         self.vaccine_name = vaccine_name
         self.available_doses = available_doses
 
@@ -13,14 +13,16 @@ class Vaccine:
     def get(self):
         cm = ConnectionManager()
         conn = cm.create_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(as_dict=True)
 
         get_vaccine = "SELECT Name, Doses FROM Vaccines WHERE Name = %s"
         try:
             cursor.execute(get_vaccine, self.vaccine_name)
-            for row in cursor:
-                self.available_doses = row['Doses']
-                return self
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            self.available_doses = int(row['Doses'])
+            return self
         except pymssql.Error:
             print("Error occurred when getting Vaccine")
             cm.close_connection()

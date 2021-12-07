@@ -7,9 +7,9 @@ import pymssql
 
 
 class Appointment:
-    def __init__(self, id, date=None, Caregiver=None, Patient=None, Vaccine=None):
+    def __init__(self, id=None, date=None, Caregiver=None, Patient=None, Vaccine=None):
         self.id = id
-        self.date = date
+        self.date = date # date is datetime object
         self.Caregiver = Caregiver
         self.Patient = Patient
         self.Vaccine = Vaccine
@@ -24,8 +24,12 @@ class Appointment:
         try:
             cursor.execute(get_appt_details, self.id)
             for row in cursor:
-                self
-
+                self.id = row['id']
+                self.date = row['Time']
+                self.Caregiver = row['Caregiver']
+                self.Patient = row['Patient']
+                self.Vaccine = row['Vaccine']
+                return self
         except pymssql.Error:
             print("Error occurred when getting Appointments")
             cm.close_connection()
@@ -52,14 +56,16 @@ class Appointment:
         conn = cm.create_connection()
         cursor = conn.cursor()
 
-        add_appointment = "INSERT INTO Appointments VALUES (%s, %s, %s, %s, %s)"
+        add_appointment = "INSERT INTO Appointments VALUES (%s, %s, %s, %s)"
+        try:
+            cursor.execute(add_appointment, (self.date, self.Caregiver,
+                                             self.Patient, self.Vaccine))
+            self.id = cursor.lastrowid
+            conn.commit()
 
-        # try:
-        #     cursor.execute(add_appointment, (self.username, self.salt, self.hash))
-        #     conn.commit()
-        # except pymssql.Error as db_error:
-        #     print("Error occurred when inserting Patients")
-        #     sqlrc = str(db_error.args[0])
-        #     print("Exception code:" + str(sqlrc))
-        #     cm.close_connection()
-        # cm.close_connection()
+        except pymssql.Error as db_error:
+            print("Error occurred when inserting Appointment")
+            sqlrc = str(db_error.args[0])
+            print("Exception code:" + str(sqlrc))
+            cm.close_connection()
+        cm.close_connection()

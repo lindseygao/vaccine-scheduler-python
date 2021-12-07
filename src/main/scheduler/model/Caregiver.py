@@ -81,3 +81,21 @@ class Caregiver:
             print("the database error is:", db_err)
             cm.close_connection()
         cm.close_connection()
+
+    def update_availability(self, d):
+        """
+        delete availability with parameter date d
+        d is a datetime object
+        """
+        cm = ConnectionManager()
+        conn = cm.create_connection()
+        cursor = conn.cursor()
+        delete_availability = "DELETE FROM Availabilities WHERE Time = %s AND Username = %s"
+        try:
+            cursor.execute(delete_availability, (d, self.username))
+            conn.commit()
+        except pymssql.Error as db_err:
+            print("Error occurred when removing caregiver availability")
+            print("the database error is:", db_err)
+            cm.close_connection()
+        cm.close_connection()
