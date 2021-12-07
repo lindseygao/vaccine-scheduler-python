@@ -7,6 +7,7 @@ from util.Util import Util
 from db.ConnectionManager import ConnectionManager
 import pymssql
 import datetime
+import re
 
 
 '''
@@ -37,6 +38,9 @@ def create_patient(tokens):
         print("Username taken, try again!")
         return
 
+    if not is_strong_password(str(password)):
+        return
+
     salt = Util.generate_salt()
     hash = Util.generate_hash(password, salt)
 
@@ -65,6 +69,9 @@ def create_caregiver(tokens):
         print("Username taken, try again!")
         return
 
+    if not is_strong_password(str(password)):
+        return
+
     salt = Util.generate_salt()
     hash = Util.generate_hash(password, salt)
 
@@ -81,6 +88,29 @@ def create_caregiver(tokens):
     except pymssql.Error:
         print("Create failed")
         return
+
+
+def is_strong_password(password):
+    if len(password) < 8:
+        print("Password must be at least 8 characters long! Please try a different"
+              " password!")
+        return False
+    mixed = any(letter.islower() for letter in password) and any(letter.isupper() for letter in password)
+    if not mixed:
+        print("Password must be a mixture of lowercase and uppercase letters!"
+              " Please try a different password!")
+        return False
+    if re.search('[0-9]', password) is None:
+        print("Password must contain at least 1 number! Please try a different password!")
+        return False
+    if re.search('[a-zA-Z]', password) is None:
+        print("Password must contain at least 1 letter! Please try a different password!")
+        return False
+    if re.search('[!@#?]', password) is None:
+        print("Password must contain at least 1 special character from: “!”, “@”, “#”, “?”."
+              " Please try a different password!")
+        return False
+    return True
 
 
 def username_exists_caregiver(username):
@@ -373,8 +403,6 @@ def reserve(tokens):
         print("the database error is:", db_err)
         cm.close_connection()
         return
-
-    # caregiver.update_availability(d)
     try:
         conn.commit()
         print("Successfully reserved an appointment for the "
@@ -529,6 +557,9 @@ def show_appointments(tokens):
             for row in cursor:
                 print("Appointment ID: " + str(row['id']) + ", Vaccine: " + str(row['Vaccine'])
                       + ", Date: " + str(row['Time']) + ", Patient: " + str(row['Patient']))
+                if row is None:
+                    print("You have no appointments scheduled!")
+                    break
         except pymssql.Error:
             print("Error occurred when showing appointments")
             cm.close_connection()
@@ -598,7 +629,7 @@ def start():
             print("Type in a valid argument")
             break
 
-        response = response.lower()
+        # response = response.lower()
         tokens = response.split(" ")
         if len(tokens) == 0:
             ValueError("Try Again")
